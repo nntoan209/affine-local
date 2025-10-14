@@ -13,13 +13,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-if not os.getenv("CHUTES_API_KEY"):
-    logger.warning("CHUTES_API_KEY is not set. Proxy endpoints may not work correctly.")
-    exit(0)
+# if not os.getenv("CHUTES_API_KEY"):
+#     logger.warning("CHUTES_API_KEY is not set. Proxy endpoints may not work correctly.")
+#     exit(0)
     
-MODEL = "openai/gpt-oss-120b"
-MODEL_NAME = "_".join(MODEL.split("/")) 
 SGLANG_PORT = 10000
+MODEL = "openai/gpt-oss-20b"
+MODEL_NAME = "_".join(MODEL.split("/")) 
 
 def test_evaluator_endpoint(sandbox):
     ids = []
@@ -33,15 +33,16 @@ def test_evaluator_endpoint(sandbox):
             "ids": [testcase_id], # testcase ids
             "max_round": 10,
             "base_url": f"http://localhost:{SGLANG_PORT}/v1",
-            "timeout": 1200,
+            "timeout": 600,
             "temperature": 0.7,
         }
-
+        
         print(f"Problem ids: {evaluation_request['ids']}\n")
         
         start_time = time.time()
         try:
             response = sandbox.proxy.evaluator(**evaluation_request, _timeout=600)
+            print(f"Response: {response}")
             elapsed = time.time() - start_time
 
             print(f"Evaluation completed in {elapsed:.2f} seconds\n")
@@ -72,15 +73,9 @@ def test_evaluator_endpoint(sandbox):
 
 def main():
     AVAILABLE_ENVS = [
-        "webshop",
-        "alfworld",
-        "babyai",
-        "sciworld",
-        # "webarena", # not support
-        "textcraft",
-        "sqlgym",
-        "maze",
-        "wordle",
+        "sat",
+        "abd",
+        "ded"
     ]
     
     parser = argparse.ArgumentParser(description='Run AgentGym evaluator for specified environment')
@@ -97,7 +92,7 @@ def main():
     
     for env_name in env_names:
         print(f"Building Docker image for {env_name} environment...")
-        sandbox = qs.get_sandbox(f"agentgym:{env_name}")
+        sandbox = qs.get_sandbox(f"affine:{env_name}")
         print(f"Container ID: {sandbox.container_id[:12]}\n")
 
         try:
@@ -114,7 +109,6 @@ def main():
                 
             # Save results to a JSON file
             results = {
-                # "ids": ids,
                 "rewards": rewards,
                 "successes": successes,
                 "avg_reward": sum(rewards) / len(rewards) if rewards else 0,

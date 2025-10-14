@@ -96,7 +96,7 @@ class DockerRuntime(ContainerRuntime):
         # Prepare resource limits
         host_config_kwargs = {
             'binds': binds,
-            'network_mode': config.resources.network if config.resources else 'bridge',
+            'network_mode': "host",
         }
         
         if config.restart_policy:

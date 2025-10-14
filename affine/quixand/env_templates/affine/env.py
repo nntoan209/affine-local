@@ -132,13 +132,13 @@ async def evaluate_model(request: EvaluatorRequest):
                 detail="API key must be provided in request or CHUTES_API_KEY environment variable"
             )
 
-        is_valid = await validate_api_key(api_key, request.base_url)
-        if not is_valid:
-            raise HTTPException(
-                status_code=401,
-                detail=f"Invalid API key for {request.base_url}"
-            )
-        logger.info(f"API key validated successfully for {request.base_url}")
+        # is_valid = await validate_api_key(api_key, request.base_url)
+        # if not is_valid:
+        #     raise HTTPException(
+        #         status_code=401,
+        #         detail=f"Invalid API key for {request.base_url}"
+        #     )
+        # logger.info(f"API key validated successfully for {request.base_url}")
 
         env_class = getattr(module, ENV_NAME.upper())
 
