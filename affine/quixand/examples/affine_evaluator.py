@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 SGLANG_PORT = 10000
 MODEL = "openai/gpt-oss-20b"
 MODEL_NAME = "_".join(MODEL.split("/")) 
+NUM_TESTCASES = 200
 
 def test_evaluator_endpoint(sandbox):
     ids = []
@@ -27,7 +28,7 @@ def test_evaluator_endpoint(sandbox):
     successes = []
     experiences = []
     
-    for testcase_id in range(200):
+    for testcase_id in range(NUM_TESTCASES):
         evaluation_request = {
             "model": MODEL,
             "ids": [testcase_id], # testcase ids
