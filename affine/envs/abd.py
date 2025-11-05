@@ -2,16 +2,13 @@ import re
 import time
 import random
 import asyncio
-import affine as af
-from typing import Any, Dict, Optional, Tuple
 import functools
-from typing import Callable
-import requests
-
-
-
-
-
+import logging
+from typing import Any, Callable , Optional , Tuple , Callable
+# from datasets import R2Dataset
+# from models import Challenge
+import affine as af
+logger = logging.getLogger("affine")
 class RetryNeeded(ValueError):
     pass
 
@@ -34,30 +31,6 @@ def retry(fn: Callable | int = 5, retries: int | None = None) -> Callable:
     return _wrapped
 
 
-@retry()
-def fallback_models(min_completion_cost: float = 0.0, min_context: int = 65536,
-                    owners: tuple = ('chutesai',), max_completion_cost: float = 1e9):
-    models = requests.get('https://llm.chutes.ai/v1/models')
-    models.raise_for_status()
-    models = models.json()['data']
-
-    model_ids = []
-    for mod in models:
-        if not max_completion_cost >= mod['pricing']['completion'] >= min_completion_cost:
-            continue
-        if mod.get('context_length', mod.get('max_model_len', 0)) < min_context:
-            continue
-        if 'text' not in mod.get('input_modalities', []):
-            continue
-        if 'text' not in mod.get('output_modalities', []):
-            continue
-        model_ids.append(mod['id'])
-    if not model_ids:
-        raise RetryNeeded
-    return model_ids
-
-
-MODELS = fallback_models(max_completion_cost=0.15)
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
 
 Program:
@@ -89,180 +62,153 @@ Requirements for the input data within the tags:
 
 Please analyze the program and provide the required input:"""
 
-INPUT_GENERATION_PROMPT = """Given this Python program and an example of how it works, generate a NEW valid input that would be accepted by the program:
-
-Program:
-```python
-{program}
-```
-
-Example:
-Input: {example_input}
-Output: {example_output}
-
-Now generate a NEW input that would work with this program. Make it different from the example but follow the same format and pattern.
-
-Requirements:
-1. Each line of input should be on a separate line
-2. Use the exact format the program expects from stdin
-3. Provide only raw input values
-4. Do not include any prefixes or extra formatting
-5. Make it different from the example input
-
-Format your response with <INPUT> </INPUT> tags like this:
-<INPUT>
-[your new input data here]
-</INPUT>
-
-Please generate a valid input:"""
-
-dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
-        dataset_name="satpalsr/rl-python",
-        buffer_size=5,
-        max_batch=5,
-))
-
 class ABD(af.BaseEnv):
-    __version__: str = "0.0.0"
-    def __init__(self):
-        super().__init__()
+    """ABD (Algorithm By Deduction) task - reverse engineering program inputs"""
+    
+    def __init__(self, dataset=None, dataset_name: str = "satpalsr/rl-python"):
+        """
+        Initialize ABD task.
+        
+        Args:
+            dataset: Optional pre-initialized R2Dataset instance to use
+            dataset_name: Name of the R2 dataset to use (only if dataset not provided)
+        """
         self._executor = af.utils.ProgramExecutor()
+        self._dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
+                dataset_name="satpalsr/rl-python",
+                buffer_size=5,
+                max_batch=5,
+        ))()
 
-    @retry()
-    async def _create_challenge(
-        self, program: str, example_in: str, example_out: str
-    ) -> Optional[af.Challenge]:
-        """Use the LLM to propose a new input, validate & execute."""
-        af.logger.trace("Creating challenge with program, example input, and example output.")
-        prompt = INPUT_GENERATION_PROMPT.format(
-            program=program,
-            example_input=example_in,
-            example_output=example_out
+    async def generate(self) -> af.Challenge:
+        """Generate a reverse engineering challenge from R2 dataset"""
+        logger.debug("Generating ABD challenge")
+        sample = await self._dataset.get()
+        
+        program = sample.get("program")
+        example_in = sample.get("inputs", "")
+        example_out = sample.get("output", "")
+        
+        # Execute program with example input to get actual output
+        if example_in and not example_in.endswith("\n"):
+            example_in += "\n"
+        
+        loop = asyncio.get_running_loop()
+        output, error = await loop.run_in_executor(
+            None, self._executor.execute, program, example_in
         )
-        af.logger.trace(f"Generated prompt for LLM: {prompt[:10]}...")
-        resp = await af.query(prompt, model=random.choice( MODELS ))
-        llm_resp = resp.response
-        if not llm_resp:
-            raise RuntimeError(f"No response from LLM: {resp.error}")
+        
+        # Use actual output if available, otherwise fallback to example
+        if error or not output.strip():
+            output = example_out
+        
+        prompt = PROMPT_TEMPLATE.format(program=program, output=output)
+        
+        return af.Challenge(
+            env=self,
+            prompt=prompt,
+            extra={"program": program, "expected_output": output}
+        )
 
-        gen_input = self.extract_input_from_response(llm_resp)
-        af.logger.trace(f"Extracted input from LLM response: {gen_input}")
+    def extract_input_from_response(self, response: str) -> str:
+        """Extract input from <INPUT>...</INPUT> tags"""
+        # Remove thinking tags
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+        response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL)
+        
+        matches = re.findall(r"<INPUT>(.*?)</INPUT>", response, re.IGNORECASE | re.DOTALL)
+        if not matches:
+            logger.debug("No <INPUT> tags found in response")
+            return ""
+        
+        lines = [ln.rstrip() for ln in matches[-1].strip().splitlines()]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        
+        extracted_input = "\n".join(lines)
+        logger.debug(f"Extracted input: {extracted_input[:50]}...")
+        return extracted_input
+
+    def _validate_input_for_program(self, program: str, inp: str) -> bool:
+        """Heuristic: ensure at least as many lines as input() calls"""
+        calls = program.count("input()")
+        lines = inp.splitlines() if inp else []
+        
+        # Special case for loop-based input
+        if "for _ in range(int(input()))" in program and lines and lines[0].isdigit():
+            valid = len(lines) > int(lines[0])
+            logger.debug(f"Loop-based validation: {valid}")
+            return valid
+        
+        valid = len(lines) >= calls
+        logger.debug(f"Input validation: {valid} (lines={len(lines)}, calls={calls})")
+        return valid
+
+    def compare_outputs(self, expected: str, actual: str) -> bool:
+        """Normalize line endings & trailing whitespace"""
+        if expected == actual:
+            return True
+        
+        exp = expected.strip().replace("\r\n", "\n")
+        act = actual.strip().replace("\r\n", "\n")
+        
+        if exp == act:
+            return True
+        
+        match = [l.rstrip() for l in exp.splitlines()] == [l.rstrip() for l in act.splitlines()]
+        logger.debug(f"Output comparison: {match}")
+        return match
+
+    async def evaluate(self, challenge: af.Challenge , response: af.Response) -> af.Evaluation:
+        """Evaluate if the provided input produces the expected output"""
+        logger.debug("Evaluating ABD response")
+        
+        program = challenge.extra.get("program", "")
+        expected_output = challenge.extra.get("expected_output", "")
+        
+        gen_input = self.extract_input_from_response(response.response or "")
+        
+        # Check if INPUT tags are present
+        tags_present = bool(re.search(r"<INPUT>.*?</INPUT>", response.response or "", re.IGNORECASE | re.DOTALL))
+        if not gen_input and not tags_present:
+            logger.debug("No <INPUT> tags found")
+            return af.Evaluation(
+                env = self, score=0.0,
+                extra = {"error": "Invalid input found", "generated_input": gen_input, "expected_output": expected_output}
+            )
+        
+        # Validate input format
         if not self._validate_input_for_program(program, gen_input):
-            af.logger.trace("Generated input insufficient, retrying")
-            return None
-
-        # Ensure final newline for stdin-based programs
+            logger.debug("Input validation failed")
+            return af.Evaluation(
+                env = self, score=0.0,
+                extra = {"error": "Invalid input for program",  "expected_output": expected_output}
+            )
+        
+        # Ensure final newline for stdin
         if gen_input and not gen_input.endswith("\n"):
             gen_input += "\n"
-
+        
+        # Execute program with generated input
         loop = asyncio.get_running_loop()
         output, error = await loop.run_in_executor(
             None, self._executor.execute, program, gen_input
         )
-        af.logger.trace(f"Executed program with generated input. Output: {output}, Error: {error}, program: {program}")
-        if error or not output.strip():
-            af.logger.trace("Generated input contains error")
-            return None
-
-        af.logger.trace("Challenge created successfully.")
-        return af.Challenge(
-            env=self,
-            prompt=PROMPT_TEMPLATE.format(program=program, output=output),
-            extra={"program": program, "expected_output": output},
-        )
-
-    async def generate(self) -> af.Challenge:
-        af.logger.trace("Generating a new challenge.")
-        while True:
-            sample = await dataset().get()
-            program     = sample.get("program")
-            example_in  = sample.get("inputs", "")
-            example_out = sample.get("output", "")
-            challenge = await self._create_challenge(program, example_in, example_out)
-            if challenge is not None:
-                af.logger.trace("Generated challenge successfully.")
-                return challenge
-            else:
-                af.logger.trace(f"Failed generation with null challenge, continuing...")
-                await asyncio.sleep(5)
-                continue
-
-    def extract_input_from_response(self, response: str) -> str:
-        """Pull out the last <INPUT>…</INPUT> block."""
-        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
-        response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL)
-        matches = re.findall(r"<INPUT>(.*?)</INPUT>", response, re.IGNORECASE | re.DOTALL)
-        if not matches:
-            af.logger.trace("No <INPUT> tags found in response.")
-            return ""
-        lines = [ln.rstrip() for ln in matches[-1].strip().splitlines()]
-        while lines and not lines[-1].strip():
-            lines.pop()
-        extracted_input = "\n".join(lines)
-        return extracted_input
-
-    def _validate_input_for_program(self, program: str, inp: str) -> bool:
-        """Heuristic: ensure at least as many lines as input() calls."""
-        calls = program.count("input()")
-        lines = inp.splitlines() if inp else []
-        if "for _ in range(int(input()))" in program and lines and lines[0].isdigit():
-            valid = len(lines) > int(lines[0])
-            af.logger.trace(f"Validation result for loop-based input: {valid}")
-            return valid
-        valid = len(lines) >= calls
-        return valid
-
-    def compare_outputs(self, expected: str, actual: str) -> bool:
-        """Normalize line endings & trailing whitespace."""
-        af.logger.trace(f"Comparing outputs. Expected: {expected}, Actual: {actual}")
-        if expected == actual:
-            af.logger.trace("Outputs match exactly.")
-            return True
-        exp = expected.strip().replace("\r\n", "\n")
-        act = actual.strip().replace("\r\n", "\n")
-        if exp == act:
-            af.logger.trace("Outputs match after normalization.")
-            return True
-        match = [l.rstrip() for l in exp.splitlines()] == [l.rstrip() for l in act.splitlines()]
-        af.logger.trace(f"Outputs match after line comparison: {match}")
-        return match
-
-    async def evaluate(self, challenge: af.Challenge, response: af.Response) -> af.Evaluation:
-        af.logger.trace(f"Evaluating response. Challenge: {challenge}, Response: {response}")
-        prog = challenge.extra["program"]
-        expected = challenge.extra["expected_output"]
-        gen_in = self.extract_input_from_response(response.response or "")
-        resp_text = response.response or ""
-        tags_present = bool(re.search(r"<INPUT>.*?</INPUT>", resp_text, re.IGNORECASE | re.DOTALL))
-        if not gen_in and not tags_present:
-            af.logger.trace("No <INPUT> tags found in response.")
+        
+        logger.debug(f"Execution result - output: {output[:50]}..., error: {error[:50] if error else 'none'}")
+        
+        if error:
+            logger.debug("Execution error occurred")
             return af.Evaluation(
                 env=self, score=0.0,
-                extra={"error": "No input found", "expected_output": expected}
+                extra={"error": error, "generated_output": output}
             )
-        if not self._validate_input_for_program(prog, gen_in):
-            af.logger.trace("Provided input is invalid or insufficient for the program.")
-            return af.Evaluation(
-                env=self, score=0.0,
-                extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
-            )
-        # Ensure final newline for stdin-based programs
-        if gen_in and not gen_in.endswith("\n"):
-            gen_in += "\n"
-        loop = asyncio.get_running_loop()
-        out, err = await loop.run_in_executor(
-            None, self._executor.execute, prog, gen_in
-        )
-        af.logger.trace(f"Executed program with generated input. Output: {out}, Error: {err}")
-        if err:
-            af.logger.trace("Error occurred during program execution.")
-            return af.Evaluation(
-                env=self, score=0.0,
-                extra={"error": err, "generated_output": out}
-            )
-        ok = self.compare_outputs(expected, out)
-        af.logger.trace(f"Output comparison result: {ok}")
+        
+        # Compare outputs
+        ok = self.compare_outputs(expected_output, output)
+        logger.debug(f"Evaluation score: {1.0 if ok else 0.0}")
+        
         return af.Evaluation(
             env=self, score=1.0 if ok else 0.0,
-            extra={"outputs_match": ok, "generated_input": gen_in, "generated_output": out, 'expected_output': expected}
+            extra={"outputs_match": ok, "generated_input": gen_input, "generated_output": output, 'expected_output': expected_output}
         )
