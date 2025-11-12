@@ -172,7 +172,7 @@ class BaseSDKEnv(ABC):
                 hosts=hosts,
                 replicas=replicas,
                 container_name=container_name,
-                mem_limit="32g",
+                mem_limit="112g",
                 pull=True,
                 force_recreate=True,
             )
