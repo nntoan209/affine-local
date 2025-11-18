@@ -11,16 +11,19 @@ class SAT:
     
     async def generate(self, index: int, n=15, k=10) -> Challenge:
         """Generate a satisfiable k-SAT problem"""
+
+        rng = random.Random(index)
+
         m = int(4.26 * n)
-        sol = {i: random.choice([True, False]) for i in range(1, n + 1)}
+        sol = {i: rng.choice([True, False]) for i in range(1, n + 1)}
         
         cls = []
         for _ in range(m):
-            vs = random.sample(list(sol), k)
-            sv = random.choice(vs)
+            vs = rng.sample(list(sol), k)
+            sv = rng.choice(vs)
             cls.append([
                 (v if sol[v] else -v) if v == sv
-                else (v if random.choice([True, False]) else -v)
+                else (v if rng.choice([True, False]) else -v)
                 for v in vs
             ])
         
