@@ -5,6 +5,7 @@ import os
 import json
 from typing import Optional
 from dotenv import load_dotenv
+import hashlib
 
 # Load environment variables
 load_dotenv()
@@ -62,6 +63,11 @@ def save_to_jsonl(data, file_path):
         for item in data:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
+def calculate_seed(env_name, task_id):
+    seed_input = f"{env_name}:{task_id}"
+    hash_bytes = hashlib.sha256(seed_input.encode()).digest()
+    return int.from_bytes(hash_bytes[:4], byteorder='big')
+
 async def evaluate_with_model(env_name, env_instance, model: str, base_url: str, task_id: Optional[int], is_gen: bool=True):
     """Evaluate using direct model endpoint"""
         
@@ -69,7 +75,8 @@ async def evaluate_with_model(env_name, env_instance, model: str, base_url: str,
         'task_id': task_id,
         'model': model,
         'base_url': base_url,
-        'temperature': 0.7
+        'temperature': 0.7,
+        'seed': calculate_seed(f"agentgym:{env_name}", task_id)
     }
     
     try:
@@ -130,12 +137,12 @@ async def main():
         'textcraft': af.TEXTCRAFT,
     }
 
-    ENVIRONMENTS_TO_NUM_SAMPLES = {
-        'alfworld': 2500,
-        'webshop': 200,
-        'babyai': 4000,
-        'sciworld': 4639,
-        'textcraft': 582,
+    ENVIRONMENTS_TO_SAMPLE_RANGE = {
+        'alfworld': (2000, 2500),
+        'webshop': (0, 500),
+        'babyai': (0, 500),
+        'sciworld': (2000, 2500),
+        'textcraft': (0, 582),
     }
 
     MIN_MAX_REWARD = {
@@ -157,15 +164,15 @@ async def main():
             print("✓ Environment loaded")
             
             # Run evaluation
-            num_samples = ENVIRONMENTS_TO_NUM_SAMPLES[env]
+            sample_range = ENVIRONMENTS_TO_SAMPLE_RANGE[env]
             print(f"\nStarting evaluation with {args.concurrency} concurrent tasks...")
 
             results = []
             output_file = f'{env}_{model_name}.jsonl'
             
             # Process in batches based on concurrency level
-            for i in range(0, num_samples, args.concurrency):
-                batch_ids = list(range(i, min(i + args.concurrency, num_samples)))
+            for i in range(sample_range[0], sample_range[1], args.concurrency):
+                batch_ids = list(range(i, min(i + args.concurrency, sample_range[1])))
                 print(f"\nProcessing batch: tasks {batch_ids[0]} to {batch_ids[-1]}")
                 
                 batch_results = await run_batch(
@@ -178,7 +185,7 @@ async def main():
                 )
                 results.extend(batch_results)
                 
-                print(f"Batch completed. Progress: {batch_ids[-1]+1}/{num_samples}")
+                print(f"Batch completed. Progress: {batch_ids[-1]+1-sample_range[0]}/{sample_range[1]-sample_range[0]}")
 
                 if len(results) >= 32 and args.is_gen:
                     save_to_jsonl(results, output_file)
@@ -195,7 +202,7 @@ async def main():
                 print(f"Average score for {env}: {avg_score:.4f}")
                 summary = {
                     "env": env,
-                    "num_samples": num_samples,
+                    "sample_range": sample_range,
                     "avg_score": avg_score,
                     "results": results
                 }
