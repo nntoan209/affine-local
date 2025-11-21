@@ -48,7 +48,7 @@ async def call_llm_api(model: str, base_url: str, prompt: str) -> str:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.7,
+            "temperature": 0.0,
             "stream": False
         }
         ) as response:
@@ -248,7 +248,7 @@ async def main():
     from datasets import load_dataset
 
     ds = load_dataset("satpalsr/rl-python", split="train")
-    ds = ds.select(random.sample(range(len(ds)), args.num_samples))
+    ds = ds.select(range(args.num_samples))
 
     # Map environment names to actual classes
     ENVIRONMENTS = {
