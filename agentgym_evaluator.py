@@ -138,10 +138,10 @@ async def main():
     }
 
     ENVIRONMENTS_TO_SAMPLE_RANGE = {
-        'alfworld': (2000, 2500),
+        'alfworld': (0, 2500),
         'webshop': (0, 500),
         'babyai': (0, 500),
-        'sciworld': (2000, 2500),
+        'sciworld': (0, 2500),
         'textcraft': (0, 582),
     }
 
