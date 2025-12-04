@@ -248,7 +248,7 @@ async def main():
     from datasets import load_dataset
 
     ds = load_dataset("satpalsr/rl-python", split="train")
-    ds = ds.select(range(args.num_samples))
+    ds = ds.select(range(20000, 23302))
 
     # Map environment names to actual classes
     ENVIRONMENTS = {
