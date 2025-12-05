@@ -64,9 +64,10 @@ def save_to_jsonl(data, file_path):
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 def calculate_seed(env_name, task_id):
-    seed_input = f"{env_name}:{task_id}"
-    hash_bytes = hashlib.sha256(seed_input.encode()).digest()
-    return int.from_bytes(hash_bytes[:4], byteorder='big')
+    seed_string = f"{env_name}:{task_id}"
+    hash_object = hashlib.sha256(seed_string.encode())
+    seed = int.from_bytes(hash_object.digest()[:8], byteorder='big') % (2**32)
+    return seed
 
 async def evaluate_with_model(env_name, env_instance, model: str, base_url: str, task_id: Optional[int], is_gen: bool=True):
     """Evaluate using direct model endpoint"""
@@ -75,7 +76,7 @@ async def evaluate_with_model(env_name, env_instance, model: str, base_url: str,
         'task_id': task_id,
         'model': model,
         'base_url': base_url,
-        'temperature': 0.7,
+        'temperature': 0.0,
         'seed': calculate_seed(f"agentgym:{env_name}", task_id)
     }
     
