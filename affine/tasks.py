@@ -397,6 +397,8 @@ class AgentGymSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """AgentGym environments have different images per task"""
+        if self.env_name == "textcraft":
+            return "nntoan209/agentgym:textcraft-v3"
         # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
         return f"bignickeye/agentgym:{env_name}-v2"
