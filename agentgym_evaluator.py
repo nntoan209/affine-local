@@ -77,6 +77,7 @@ async def evaluate_with_model(env_name, env_instance, model: str, base_url: str,
         'model': model,
         'base_url': base_url,
         'temperature': 0.0,
+        'max_rounds': 30,
         'seed': calculate_seed(f"agentgym:{env_name}", task_id)
     }
     

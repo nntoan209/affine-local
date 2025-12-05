@@ -372,7 +372,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
 
     # Default configuration for each environment - can be overridden in subclasses
     DEFAULT_DATA_LEN = 200
-    DEFAULT_MAX_ROUND = 10
+    DEFAULT_MAX_ROUND = 30
     DEFAULT_TIMEOUT = 1200
 
     def __init__(self, data_len: int = None, max_round: int = None):
@@ -520,7 +520,6 @@ class ALFWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
-    DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
 
     @property
