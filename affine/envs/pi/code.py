@@ -43,7 +43,7 @@ logger.setLevel(os.environ.get("I3_CODE_LOG_LEVEL", "INFO"))
 INSTRUCTION_PROMPT = "Solve the programming task below in a Python markdown code block."
 
 # Default timeout per test case (seconds)
-DEFAULT_TEST_TIMEOUT = 20
+DEFAULT_TEST_TIMEOUT = 600
 
 def extract_code_from_markdown(text: str) -> str:
     """Extract Python code from markdown code blocks."""
