@@ -9,7 +9,7 @@ from typing import List
 import os
 from datasets import load_dataset
 
-RETRIES = 1
+RETRIES = 3
 
 def parse_args():
     """Parse command line arguments"""
@@ -76,6 +76,8 @@ class ConcurrentEvaluator:
         base_url: str,
         task,
         dataset_size: int,
+        start_index: int = 0,
+        end_index: int = None,
         max_concurrent: int = 10,
         save_interval: int = 10,
         output_file: str = "results.jsonl",
@@ -91,7 +93,10 @@ class ConcurrentEvaluator:
         # Track results and state
         self.results: List[SampleResult] = []
         self.completed_indices = set()
-        self.current_index = 0
+        self.start_index = max(0, start_index)
+        self.end_index = min(end_index if end_index is not None else dataset_size, dataset_size)
+        logger.info(f"Evaluating dataset range: [{self.start_index}, {self.end_index})")
+        self.current_index = self.start_index
         self.samples_since_save = 0
         
         # Semaphore to limit concurrent tasks
@@ -214,7 +219,7 @@ class ConcurrentEvaluator:
         tasks = set()
         
         # Fill initial task pool
-        while self.current_index < self.dataset_size and len(tasks) < self.max_concurrent:
+        while self.current_index < self.end_index and len(tasks) < self.max_concurrent:
             if self.current_index not in self.completed_indices:
                 task = asyncio.create_task(self.process_sample(self.current_index))
                 tasks.add(task)
@@ -243,7 +248,7 @@ class ConcurrentEvaluator:
                     )
             
             # Add new tasks to maintain concurrency
-            while (self.current_index < self.dataset_size and len(tasks) < self.max_concurrent):
+            while (self.current_index < self.end_index and len(tasks) < self.max_concurrent):
                 if self.current_index not in self.completed_indices:
                     new_task = asyncio.create_task(self.process_sample(self.current_index))
                     tasks.add(new_task)
@@ -277,9 +282,11 @@ async def main():
             base_url=args.base_url,
             task=task,
             dataset_size=len(task.dataset),
+            start_index=0,
+            end_index=len(task.dataset),
             max_concurrent=args.concurrency,
             save_interval=16,
-            output_file=f"results_{env}_{model_name}.jsonl",
+            output_file=f"results_{env}.jsonl",
         )
 
         results = await evaluator.run()
