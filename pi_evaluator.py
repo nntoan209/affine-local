@@ -9,6 +9,8 @@ from typing import List
 import os
 from datasets import load_dataset
 
+RETRIES = 1
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -25,7 +27,7 @@ def parse_args():
     parser.add_argument('--base-url',
                        default="https://llm.chutes.ai/v1",
                        help='Model service URL (required with --model)')
-    parser.add_argument('--concurrency', type=int, default=64,
+    parser.add_argument('--concurrency', type=int, default=32,
                        help='Number of concurrent evaluations')
     args = parser.parse_args()
 
@@ -41,7 +43,7 @@ async def call_llm_api(model: str, base_url: str, prompt: str) -> str:
         f"{base_url}/chat/completions",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.environ.get('API_KEY')}",
+            "Authorization": f"Bearer {os.environ.get('CHUTES_API_KEY')}",
         },
         json={
             "model": model,
@@ -105,7 +107,7 @@ class ConcurrentEvaluator:
         """Save current results to output file."""
         try:
             with open(self.output_file, 'a') as f:
-                if result.score > 0:
+                if result.score == 1.0:
                     f.write(json.dumps(asdict(result)) + '\n')
             logger.info(f"Saved {len(self.results)} results to {self.output_file}")
         except Exception as e:
@@ -169,26 +171,26 @@ class ConcurrentEvaluator:
                 # Generate challenge
                 challenge = await self.task.generate(index)
                 
-                for _ in range(3):
+                for _ in range(RETRIES):
                     # Call LLM API
                     llm_response = await call_llm_api(self.model, self.base_url, challenge.prompt)
                     
                     # Evaluate the response
-                    evaluation = await self.task.evaluate(llm_response, challenge)
+                    score, test_result = await self.task.evaluate(llm_response, challenge)
                     
                     # If score > 0, return success
-                    if evaluation > 0:
+                    if score > 0:
                         result = SampleResult(
                             index=index,
                             prompt=challenge.prompt,
                             response=llm_response,
-                            score=evaluation,
+                            score=score,
                         )
-                        logger.info(f"Sample {index} completed with score {evaluation}")
+                        logger.info(f"Sample {index} completed with score {score}")
                         return result
                     
                 # If no score > 0, return failed sample
-                logger.warning(f"Sample {index} failed after 3 retries")
+                logger.warning(f"Sample {index} failed after {RETRIES} retries")
                 return SampleResult(
                     index=index,
                     prompt="",
