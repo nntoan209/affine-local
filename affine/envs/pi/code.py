@@ -271,9 +271,7 @@ class CodeTask:
         
         # Format test result as "passed/total"
         test_result = f"{passed}/{total}"
-        
-        logger.info(f"Evaluation complete: {test_result} tests passed, pass_rate={pass_rate:.2%}, score={score}")
-        
+                
         return score, test_result
     
     async def _run_stdin_test(
